@@ -2,8 +2,19 @@ use async_std::task;
 use rumqttc::{AsyncClient, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::error::Error;
 use std::time::Duration;
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct Config {
+    actions: HashMap<String, HashMap<String, Vec<(String, String)>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeviceEvent {
+    action: String,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceDefinition {
@@ -36,6 +47,24 @@ pub struct DeviceEntry {
 #[async_std::main]
 async fn main() {
     dotenv::dotenv().ok();
+    let mut cfg: Config = Default::default();
+
+    let mut act: Vec<(String, String)> = Default::default();
+
+    act.push(("asd".to_string(), r#"{ "state": "TOGGLE" }"#.to_string()));
+    act.push(("dedas".to_string(), r#"{"state": "ON"}"#.to_string()));
+
+    let mut map1: HashMap<String, Vec<(String, String)>> = Default::default();
+
+    map1.insert("action_push".to_string(), act);
+    cfg.actions.insert("switch1 - test".to_string(), map1);
+    println!("Config: {}", toml::to_string(&cfg).unwrap());
+
+    let cfg = std::fs::read_to_string("config.toml").unwrap();
+
+    let config: Config = toml::from_str(&cfg).unwrap();
+
+    println!("Config: {:?}", &config);
 
     let mut mqttoptions = MqttOptions::new("rumqtt-async", "192.168.0.220", 1883);
     mqttoptions.set_keep_alive(Duration::from_secs(5));
@@ -75,8 +104,10 @@ async fn main() {
                         let devices: Vec<DeviceEntry> =
                             serde_json::from_slice(&publish.payload).unwrap();
 
-                        println!("Devices: {:?}", &devices);
+                        println!("Devices:");
+
                         for d in &devices {
+                            println!("{}", &d.friendly_name);
                             if d.friendly_name.starts_with("Switch") {
                                 client
                                     .subscribe(
@@ -87,10 +118,43 @@ async fn main() {
                                     .unwrap();
                             }
                         }
+                        println!("------");
                     } else {
-                        println!("publish: {:?}", &publish);
-                        let s = String::from_utf8_lossy(&publish.payload);
-                        println!("payload: {}", s);
+                        let key = publish.topic.clone().replace("zigbee2mqtt/", "");
+                        if let Some(cfg) = config.actions.get(&key) {
+                            println!("Found key {}", &key);
+                            let s = String::from_utf8_lossy(&publish.payload);
+                            println!("payload: {}", s);
+                            let event: DeviceEvent =
+                                serde_json::from_slice(&publish.payload).unwrap();
+                            println!("Event: {:?}", &event);
+                            if let Some(actions) = cfg.get(&event.action) {
+                                println!(
+                                    "Found list of actions for event {}: {:?}",
+                                    &event.action, &actions
+                                );
+                                for (dev, payload) in actions {
+                                    let client = client.clone();
+                                    let payload = payload.clone();
+                                    let target = format!("zigbee2mqtt/{}/set", dev);
+                                    task::spawn(async move {
+                                        client
+                                            .publish(
+                                                &target,
+                                                QoS::AtMostOnce,
+                                                false,
+                                                payload.as_bytes(),
+                                            )
+                                            .await
+                                            .unwrap();
+                                    });
+                                }
+                            }
+                        } else {
+                            println!("publish: {:?}", &publish);
+                            let s = String::from_utf8_lossy(&publish.payload);
+                            println!("payload: {}", s);
+                        }
                     }
                 }
                 x => {
