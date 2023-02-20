@@ -13,7 +13,9 @@ pub struct Config {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceEvent {
-    action: String,
+    action: Option<String>,
+    linkquality: Option<u8>,
+    battery: Option<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +81,10 @@ async fn main() {
         .subscribe("zigbee2mqtt/bridge/devices", QoS::AtMostOnce)
         .await
         .unwrap();
+    client
+        .subscribe("zigbee2mqtt/+", QoS::AtMostOnce)
+        .await
+        .unwrap();
 
     /*
      * let json_bytes: Vec<u8> = r#"{"brightness":56,"color":{"x":0.46187,"y":0.19485},"color_mode":"xy","color_temp":250,"state":"ON"}"#.into();
@@ -108,7 +114,9 @@ async fn main() {
 
                         for d in &devices {
                             println!("{}", &d.friendly_name);
-                            if d.friendly_name.starts_with("Switch") {
+                            /*
+                            if !d.friendly_name.starts_with("Living") {
+                                println!("Subscribe {}", &d.friendly_name);
                                 client
                                     .subscribe(
                                         &format!("zigbee2mqtt/{}", &d.friendly_name),
@@ -117,6 +125,7 @@ async fn main() {
                                     .await
                                     .unwrap();
                             }
+                            */
                         }
                         println!("------");
                     } else {
@@ -128,26 +137,28 @@ async fn main() {
                             let event: DeviceEvent =
                                 serde_json::from_slice(&publish.payload).unwrap();
                             println!("Event: {:?}", &event);
-                            if let Some(actions) = cfg.get(&event.action) {
-                                println!(
-                                    "Found list of actions for event {}: {:?}",
-                                    &event.action, &actions
-                                );
-                                for (dev, payload) in actions {
-                                    let client = client.clone();
-                                    let payload = payload.clone();
-                                    let target = format!("zigbee2mqtt/{}/set", dev);
-                                    task::spawn(async move {
-                                        client
-                                            .publish(
-                                                &target,
-                                                QoS::AtMostOnce,
-                                                false,
-                                                payload.as_bytes(),
-                                            )
-                                            .await
-                                            .unwrap();
-                                    });
+                            if let Some(action) = event.action {
+                                if let Some(actions) = cfg.get(&action) {
+                                    println!(
+                                        "Found list of actions for event {}: {:?}",
+                                        &action, &actions
+                                    );
+                                    for (dev, payload) in actions {
+                                        let client = client.clone();
+                                        let payload = payload.clone().replace("'", r#"""#);
+                                        let target = format!("zigbee2mqtt/{}/set", dev);
+                                        task::spawn(async move {
+                                            client
+                                                .publish(
+                                                    &target,
+                                                    QoS::AtMostOnce,
+                                                    false,
+                                                    payload.as_bytes(),
+                                                )
+                                                .await
+                                                .unwrap();
+                                        });
+                                    }
                                 }
                             }
                         } else {
