@@ -8,6 +8,7 @@ use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
+    mqtthost: String,
     actions: HashMap<String, HashMap<String, Vec<(String, String)>>>,
 }
 
@@ -68,7 +69,7 @@ async fn main() {
 
     println!("Config: {:?}", &config);
 
-    let mut mqttoptions = MqttOptions::new("rumqtt-async", "192.168.0.220", 1883);
+    let mut mqttoptions = MqttOptions::new("homeswitch-rs", config.mqtthost, 1883);
     mqttoptions.set_keep_alive(Duration::from_secs(5));
     mqttoptions.set_max_packet_size(1000000, 1000000);
 
